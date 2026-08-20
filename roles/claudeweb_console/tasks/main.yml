@@ -1,0 +1,80 @@
+---
+# Manages the LIVE claudeweb console instance already running on this box
+# (systemd claude-web.service, /opt/claude-web -- see bootstrap.sh in that
+# repo). Deliberately separate from roles/site and console_deploy.yml's
+# `claude_vps` group, which target the throwaway test VPS used to validate
+# this whole pipeline (AGENT-32's acceptance criteria) -- mixing prod and
+# the test target in one group risks an accidental cross-deploy.
+#
+# Two tags, one playbook, one state model:
+#   full -- git pull + rerun bootstrap.sh (code + service, restarts it)
+#   env  -- partial merge into the daemon's own credential file, no restart
+#           needed (claude_daemon.py's load_daemon_env() reads it fresh on
+#           every subprocess invocation)
+
+- name: "[full] Trust /opt/claude-web for git (avoids dubious ownership once claudeweb owns it)"
+  community.general.git_config:
+    name: safe.directory
+    scope: global
+    value: /opt/claude-web
+  tags: [full]
+
+- name: "[full] Clone or update claude-web-console from GitHub (private repo, PAT auth)"
+  git:
+    repo: "https://x-access-token:{{ github_pat }}@github.com/UsatovAI/claude-web-console.git"
+    dest: /opt/claude-web
+    version: main
+    force: true
+  no_log: true
+  tags: [full]
+
+- name: "[full] Ensure bootstrap.sh is executable"
+  file:
+    path: /opt/claude-web/bootstrap.sh
+    mode: "0755"
+  tags: [full]
+
+- name: "[full] Ensure PyYAML present (core/config.py needs it)"
+  apt:
+    name: python3-yaml
+    state: present
+    update_cache: true
+  tags: [full]
+
+- name: "[full] Run bootstrap.sh (idempotent -- also the redeploy path, restarts claude-web.service)"
+  command: /opt/claude-web/bootstrap.sh
+  environment:
+    PASSWORD: "{{ console_login_password }}"
+    EMAIL: "{{ console_admin_email }}"
+  register: bootstrap_out
+  no_log: true
+  tags: [full]
+
+- name: "[full] Show bootstrap output"
+  debug:
+    var: bootstrap_out.stdout_lines
+  tags: [full]
+
+- name: "[env] Merge env_updates into the daemon's own credential file (config.yaml's daemon_env_file)"
+  command: python3 /root/ansible-deploy/scripts/update_daemon_env.py
+  args:
+    stdin: "{{ {'path': daemon_env_file, 'updates': env_updates} | to_json }}"
+  register: env_merge_out
+  no_log: true
+  tags: [env]
+
+- name: "[env] Fix ownership/mode -- daemon_user must own it, mode 700 dir / 600 file (bootstrap.sh's own convention)"
+  file:
+    path: "{{ item.path }}"
+    owner: claudeweb
+    group: claudeweb
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ daemon_env_file | dirname }}", mode: "0700" }
+    - { path: "{{ daemon_env_file }}", mode: "0600" }
+  tags: [env]
+
+- name: "[env] Show merge result"
+  debug:
+    msg: "{{ env_merge_out.stdout }}"
+  tags: [env]

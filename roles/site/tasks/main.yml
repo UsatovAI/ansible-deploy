@@ -1,0 +1,67 @@
+---
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Install git
+  apt:
+    name: git
+    state: present
+
+- name: Trust site directory for git (avoids "dubious ownership" once www-data owns it)
+  community.general.git_config:
+    name: safe.directory
+    scope: global
+    value: /var/www/pavel-usatov-site
+
+- name: Clone or update pavel-usatov-site
+  git:
+    repo: "https://github.com/UsatovAI/pavel-usatov-site.git"
+    dest: /var/www/pavel-usatov-site
+    version: main
+    force: true
+
+- name: Fix ownership of site files
+  file:
+    path: /var/www/pavel-usatov-site
+    owner: www-data
+    group: www-data
+    recurse: true
+
+- name: Deploy nginx site config
+  template:
+    src: nginx-site.conf.j2
+    dest: /etc/nginx/sites-available/pavel-usatov-site
+  notify: reload nginx
+
+- name: Enable site
+  file:
+    src: /etc/nginx/sites-available/pavel-usatov-site
+    dest: /etc/nginx/sites-enabled/pavel-usatov-site
+    state: link
+  notify: reload nginx
+
+- name: Disable default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Allow HTTP through ufw if active
+  community.general.ufw:
+    rule: allow
+    port: "{{ site_domain_or_port.port }}"
+    proto: tcp
+  when: ansible_facts.services['ufw.service'] is defined
+  ignore_errors: true
+
+- name: Ensure nginx is enabled and started
+  systemd:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Flush handlers now so validation curl works immediately
+  meta: flush_handlers

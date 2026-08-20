@@ -1,0 +1,51 @@
+---
+- name: Ensure ~/.claude/skills exists
+  file:
+    path: /root/.claude/skills
+    state: directory
+    mode: "0755"
+
+- name: Copy skills (non-secret prompt files)
+  copy:
+    src: skills/
+    dest: /root/.claude/skills/
+    mode: preserve
+
+- name: Check existing MCP servers
+  command: claude mcp list
+  register: mcp_list
+  changed_when: false
+  failed_when: false
+
+- name: Add Jira MCP server
+  command: >
+    claude mcp add jira
+    -e ATLASSIAN_SITE_NAME={{ jira_site_url | regex_replace('^https?://', '') | regex_replace('\\.atlassian\\.net.*', '') }}
+    -e ATLASSIAN_USER_EMAIL={{ jira_email }}
+    -e ATLASSIAN_API_TOKEN={{ jira_api_token }}
+    -- npx -y @aashari/mcp-server-atlassian-jira
+  when:
+    - "'jira:' not in mcp_list.stdout"
+    - jira_api_token | length > 0
+  no_log: true
+
+- name: Add GitHub MCP server (hosted HTTP endpoint, PAT auth)
+  command: >
+    claude mcp add --transport http github
+    https://api.githubcopilot.com/mcp/
+    --header "Authorization: Bearer {{ github_pat }}"
+  when:
+    - "'github:' not in mcp_list.stdout"
+    - github_pat | length > 0
+  no_log: true
+
+- name: Verify MCP servers connect
+  command: claude mcp list
+  register: mcp_list_after
+  changed_when: false
+  when: (jira_api_token | length > 0) or (github_pat | length > 0)
+
+- name: Show MCP connection status
+  debug:
+    var: mcp_list_after.stdout_lines
+  when: mcp_list_after is defined and mcp_list_after.stdout is defined

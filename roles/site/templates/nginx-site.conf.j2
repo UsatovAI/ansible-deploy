@@ -1,0 +1,12 @@
+server {
+    listen {{ site_domain_or_port.port }};
+    listen [::]:{{ site_domain_or_port.port }};
+    server_name {{ ansible_host }};
+
+    root /var/www/pavel-usatov-site;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

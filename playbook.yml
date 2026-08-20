@@ -1,0 +1,14 @@
+---
+- name: Deploy Claude Code + skills/MCPs + site (AGENT-32)
+  hosts: claude_vps
+  become: true
+  vars_files:
+    - group_vars/secrets.yml
+  vars:
+    ansible_user: "{{ vps_ansible_user }}"
+    ansible_password: "{{ vps_ansible_password }}"
+    ansible_become_pass: "{{ vps_ansible_password }}"
+  roles:
+    - { role: claude_cli, tags: [claude, agent-33] }
+    - { role: skills_mcp, tags: [skills, mcp, agent-34] }
+    - { role: site, tags: [site, agent-35] }

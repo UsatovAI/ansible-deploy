@@ -1,0 +1,45 @@
+---
+# Single method to interact with the live claudeweb console's state -- both
+# a full redeploy and a partial .env update go through this one playbook,
+# selected by tag. See scripts/claudeweb.sh for the wrapper CLI and
+# roles/claudeweb_console/tasks/main.yml for what each tag actually does.
+- name: Manage the live claudeweb console (full redeploy / partial .env update)
+  hosts: claudeweb_prod
+  become: true
+  vars_files:
+    - group_vars/secrets.yml
+  vars:
+    # Must match config.yaml's daemon_env_file on the deployed app -- not a
+    # secret itself, just the path the secret file lives at.
+    daemon_env_file: /home/claudeweb/env/.env
+    # default({}): claudeweb_daemon_env may not exist in the vault at all
+    # yet (it's new) -- don't hard-fail the whole env tag over that, just
+    # treat it as "nothing claudeweb-specific configured yet".
+    #
+    # CLAUDE_CODE_OAUTH_TOKEN and GHP_KEY are NOT separate fields in
+    # claudeweb_daemon_env -- claude_code_oauth_token and github_pat (both
+    # already top-level vault vars, already used for root's own auth and
+    # git clone/MCP access) are the one source of truth for both identities.
+    # No claudeweb-specific override, no fallback-if-blank: unconditional
+    # reuse. Two near-duplicate fields with fallback logic between them is
+    # exactly the "which one actually wins" confusion a single source of
+    # truth is supposed to prevent. GHP_KEY is what web/github_review.py
+    # reads as `gh`'s GH_TOKEN for fetching PR diffs and posting review
+    # comments -- github_pat already covers that (same GitHub org).
+    _claudeweb_daemon_env_effective: "{{ (claudeweb_daemon_env | default({})) | combine({
+      'CLAUDE_CODE_OAUTH_TOKEN': claude_code_oauth_token | default(''),
+      'GHP_KEY': github_pat | default('')
+      }) }}"
+    # `env` tag default: push every non-blank key from the effective dict
+    # above in one go. scripts/claudeweb.sh's `env KEY=VALUE` form passes
+    # env_updates via -e instead, which (correctly) takes precedence over
+    # this default -- same tag, same task, just a smaller dict for a
+    # one-off partial update.
+    env_updates: "{{ _claudeweb_daemon_env_effective | dict2items | rejectattr('value', 'equalto', '') | items2dict }}"
+  # No role-level `tags:` here -- that would apply to every task in the
+  # role regardless of --tags (a common ansible pitfall), defeating the
+  # whole point of full vs env being separately selectable. Filtering is
+  # done entirely by the per-task tags already in
+  # roles/claudeweb_console/tasks/main.yml.
+  roles:
+    - claudeweb_console

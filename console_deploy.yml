@@ -1,0 +1,46 @@
+---
+- name: Deploy claude-web-console (non-root) to test VPS
+  hosts: claude_vps
+  become: true
+  vars_files:
+    - group_vars/secrets.yml
+  vars:
+    ansible_user: "{{ vps_ansible_user }}"
+    ansible_password: "{{ vps_ansible_password }}"
+    ansible_become_pass: "{{ vps_ansible_password }}"
+  tasks:
+    - name: Trust /opt/claude-web-console for git (avoids "dubious ownership" once claudeweb owns it)
+      community.general.git_config:
+        name: safe.directory
+        scope: global
+        value: /opt/claude-web-console
+
+    - name: Clone or update claude-web-console from GitHub (private repo, PAT auth)
+      git:
+        repo: "https://x-access-token:{{ github_pat }}@github.com/UsatovAI/claude-web-console.git"
+        dest: /opt/claude-web-console
+        version: main
+        force: true
+      no_log: true
+
+    - name: Ensure bootstrap.sh is executable
+      file:
+        path: /opt/claude-web-console/bootstrap.sh
+        mode: "0755"
+
+    - name: Ensure PyYAML present (config.py needs it)
+      apt:
+        name: python3-yaml
+        state: present
+        update_cache: true
+
+    - name: Run bootstrap.sh
+      command: /opt/claude-web-console/bootstrap.sh
+      environment:
+        PASSWORD: "{{ console_login_password }}"
+        EMAIL: "{{ console_admin_email }}"
+      register: bootstrap_out
+
+    - name: Show bootstrap output
+      debug:
+        var: bootstrap_out.stdout_lines
